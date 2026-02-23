@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Async Immersion Scanner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700&display=swap');
+        body { font-family: 'JetBrains Mono', monospace; background: #000; overflow: hidden; user-select: none; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none; height: 12px; width: 12px; border-radius: 50%;
+            background: #4ade80; cursor: pointer; margin-top: -5px;
+            box-shadow: 0 0 10px rgba(74,222,128,0.5); transition: transform 0.1s;
+        }
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%; height: 2px; cursor: pointer;
+            background: rgba(255,255,255,0.1); border-radius: 1px;
+        }
+        @keyframes pulse-red {
+            0%,100% { opacity:1; box-shadow: 0 0 0 rgba(239,68,68,0.4); }
+            50%      { opacity:0.5; box-shadow: 0 0 10px rgba(239,68,68,0.8); }
+        }
+        .animate-pulse-red { animation: pulse-red 2s infinite; }
+        .glass-panel {
+            background: rgba(0,0,0,0.75); backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px); border-right: 1px solid rgba(255,255,255,0.08);
+        }
+        .dir-btn { transition: all 0.15s ease; }
+        .dir-btn.active  { background: rgba(74,222,128,0.15); border-color: rgba(74,222,128,0.7);  color: #4ade80; }
+        .dir-btn.inactive { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.12); color: rgba(255,255,255,0.4); }
+        .dir-btn.inactive:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.25); color: rgba(255,255,255,0.7); }
+        .dir-btn.dimmed { opacity: 0.25; pointer-events: none; }
+        .loop-btn { transition: all 0.2s ease; }
+        .loop-btn.active   { background: rgba(251,191,36,0.12); border-color: rgba(251,191,36,0.6); color: #fbbf24; }
+        .loop-btn.inactive { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.12); color: rgba(255,255,255,0.35); }
+        .loop-btn.inactive:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.25); color: rgba(255,255,255,0.65); }
+        .axis-pill { transition: all 0.15s ease; cursor: pointer; }
+        .axis-pill.active   { background: rgba(251,191,36,0.15); border-color: rgba(251,191,36,0.5); color: #fbbf24; }
+        .axis-pill.inactive { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.1); color: rgba(255,255,255,0.35); }
+        .axis-pill.inactive:hover { border-color: rgba(255,255,255,0.2); color: rgba(255,255,255,0.6); }
+    </style>
+</head>
+<body class="text-white">
+
+<canvas id="mainCanvas" class="absolute inset-0 w-full h-full z-0"></canvas>
+
+<!-- Recording indicator -->
+<div id="recordingIndicator" class="absolute top-6 right-6 items-center space-x-2 z-50" style="display:none">
+    <div class="w-3 h-3 bg-red-500 rounded-full animate-pulse-red"></div>
+    <span class="text-red-500 font-bold tracking-widest text-xs">REC</span>
+</div>
+
+<!-- Upload overlay -->
+<div id="uploadOverlay" class="absolute inset-0 flex items-center justify-center z-20 bg-black/80 backdrop-blur-sm" style="transition:opacity 0.5s">
+    <div class="text-center space-y-6 p-10 border border-white/10 rounded-xl bg-black/40 shadow-2xl max-w-md w-full mx-4">
+        <div class="space-y-2">
+            <div class="text-4xl font-light tracking-[0.2em] text-white/90">ASYNC</div>
+            <div class="text-[10px] text-white/40 tracking-widest uppercase">Immersion Scanner</div>
+        </div>
+        <p class="text-white/50 text-xs leading-relaxed font-light">Upload an image to initiate the pixel displacement sequence.</p>
+        <button id="uploadBtnBig" class="group relative px-8 py-4 bg-white/5 hover:bg-white/10 border border-white/20 transition-all duration-300 w-full overflow-hidden">
+            <div class="flex items-center justify-center space-x-3 relative z-10">
+                <i data-lucide="upload" class="w-5 h-5 text-green-400"></i>
+                <span class="tracking-widest uppercase text-xs">Initialize Source</span>
+            </div>
+            <div class="absolute top-0 left-0 w-2 h-2 border-t border-l border-green-400/30 group-hover:border-green-400 transition-colors"></div>
+            <div class="absolute top-0 right-0 w-2 h-2 border-t border-r border-green-400/30 group-hover:border-green-400 transition-colors"></div>
+            <div class="absolute bottom-0 left-0 w-2 h-2 border-b border-l border-green-400/30 group-hover:border-green-400 transition-colors"></div>
+            <div class="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-green-400/30 group-hover:border-green-400 transition-colors"></div>
+        </button>
+        <p class="text-[9px] text-white/20 uppercase tracking-widest">Supports JPG, PNG, WEBP • drag & drop</p>
+    </div>
+</div>
+
+<input type="file" id="fileInput" class="hidden" accept="image/*" />
+
+<!-- Sidebar -->
+<div id="sidebar" class="absolute top-0 left-0 h-full w-[15rem] glass-panel transform -translate-x-full transition-transform duration-500 z-30 flex flex-col" style="transition-timing-function:cubic-bezier(0.16,1,0.3,1)">
+
+    <div class="p-6 border-b border-white/10 flex justify-between items-center shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse" style="box-shadow:0 0 8px rgba(74,222,128,0.6)"></div>
+            <div class="flex flex-col">
+                <span class="tracking-[0.2em] font-bold text-white/90 text-sm">ASYNC</span>
+                <span class="text-[9px] text-white/40 tracking-wider">v1.2.0 build</span>
+            </div>
+        </div>
+        <button id="newSourceBtn" class="text-white/40 hover:text-white text-[9px] uppercase border border-white/10 px-3 py-1.5 rounded hover:bg-white/5 hover:border-white/40 transition-all">Eject</button>
+    </div>
+
+    <div class="flex-1 p-6 space-y-7 overflow-y-auto no-scrollbar">
+
+        <!-- Direction pad -->
+        <div class="space-y-3">
+            <div class="text-white/50 uppercase tracking-wider text-[10px] font-bold">Scan Direction</div>
+            <div class="grid grid-cols-3 gap-1.5">
+                <div></div>
+                <button class="dir-btn inactive border rounded py-2 flex items-center justify-center" data-dir="up"><i data-lucide="arrow-up" class="w-3.5 h-3.5"></i></button>
+                <div></div>
+                <button class="dir-btn inactive border rounded py-2 flex items-center justify-center" data-dir="left"><i data-lucide="arrow-left" class="w-3.5 h-3.5"></i></button>
+                <div class="border border-white/5 rounded flex items-center justify-center bg-black/20"><div class="w-1.5 h-1.5 rounded-full bg-white/20"></div></div>
+                <button class="dir-btn active border rounded py-2 flex items-center justify-center" data-dir="right"><i data-lucide="arrow-right" class="w-3.5 h-3.5"></i></button>
+                <div></div>
+                <button class="dir-btn inactive border rounded py-2 flex items-center justify-center" data-dir="down"><i data-lucide="arrow-down" class="w-3.5 h-3.5"></i></button>
+                <div></div>
+            </div>
+        </div>
+
+        <!-- Pendulum Loop -->
+        <div class="space-y-3">
+            <div class="flex items-center justify-between">
+                <div class="text-white/50 uppercase tracking-wider text-[10px] font-bold">Pendulum Loop</div>
+                <button id="loopBtn" class="loop-btn inactive border rounded px-3 py-1.5 flex items-center space-x-1.5 text-[9px] uppercase tracking-widest font-bold">
+                    <i data-lucide="repeat" class="w-3 h-3"></i>
+                    <span id="loopBtnLabel">Off</span>
+                </button>
+            </div>
+            <div id="axisRow" style="display:none; gap:0.375rem">
+                <button class="axis-pill active border rounded py-1.5 text-[9px] uppercase tracking-wider font-bold text-center" style="flex:1" data-axis="horizontal">← → H</button>
+                <button class="axis-pill inactive border rounded py-1.5 text-[9px] uppercase tracking-wider font-bold text-center" style="flex:1" data-axis="vertical">↑ ↓ V</button>
+                <button class="axis-pill inactive border rounded py-1.5 text-[9px] uppercase tracking-wider font-bold text-center" style="flex:1" data-axis="all">ALL</button>
+            </div>
+            <p id="loopDesc" class="text-[9px] text-white/25 leading-tight" style="display:none">Bounces back & forth. ALL cycles through both axes.</p>
+        </div>
+
+        <!-- Speed -->
+        <div class="space-y-3">
+            <div class="flex justify-between text-white/50 items-end">
+                <span class="uppercase tracking-wider text-[10px] font-bold">Scan Velocity</span>
+                <span id="speedValue" class="text-green-400 font-mono text-xs bg-green-400/10 px-2 py-0.5 rounded">2.0x</span>
+            </div>
+            <input type="range" id="speedInput" min="0" max="20" step="0.1" value="2">
+            <div class="text-[9px] text-white/20 flex justify-between"><span>STATIC</span><span>MAX</span></div>
+        </div>
+
+        <!-- Slice Width -->
+        <div class="space-y-3">
+            <div class="flex justify-between text-white/50 items-end">
+                <span class="uppercase tracking-wider text-[10px] font-bold">Slice Width</span>
+                <span id="widthValue" class="text-green-400 font-mono text-xs bg-green-400/10 px-2 py-0.5 rounded">1px</span>
+            </div>
+            <input type="range" id="widthInput" min="1" max="100" step="1" value="1">
+            <p class="text-[9px] text-white/30 leading-tight">Width of the temporal slice extracted from source.</p>
+        </div>
+
+        <!-- Fit Mode -->
+        <div class="p-1 rounded-xl bg-white/5 border border-white/10">
+            <div class="flex items-center justify-between p-3">
+                <div class="flex items-center space-x-3 text-white/70">
+                    <i data-lucide="ratio" class="w-4 h-4"></i>
+                    <div class="flex flex-col">
+                        <span class="uppercase tracking-wider text-[10px] font-bold">Fit Mode</span>
+                        <span id="aspectLabel" class="text-[9px] text-white/40">STRETCH TO FILL</span>
+                    </div>
+                </div>
+                <button id="aspectToggle" class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors" style="background:rgba(255,255,255,0.2)">
+                    <span id="aspectThumb" class="inline-block h-3 w-3 transform rounded-full bg-white shadow-sm" style="transform:translateX(4px); transition:transform 0.2s"></span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="p-4 border border-white/5 bg-black/20 rounded-xl space-y-2 font-mono text-[9px] text-white/30">
+            <div class="flex justify-between border-b border-white/5 pb-2 mb-2">
+                <span class="font-bold">SYSTEM MONITOR</span>
+                <div class="flex space-x-1">
+                    <div class="w-1 h-1 bg-white/20 rounded-full"></div>
+                    <div class="w-1 h-1 bg-white/20 rounded-full"></div>
+                    <div class="w-1 h-1 bg-white/20 rounded-full"></div>
+                </div>
+            </div>
+            <div class="flex justify-between"><span>SRC_DIM</span><span id="statRes" class="text-white/50">-</span></div>
+            <div class="flex justify-between"><span>SCAN_POS</span><span id="statPos" class="text-green-400/70">0</span></div>
+            <div class="flex justify-between"><span>DIRECTION</span><span id="statDir" class="text-green-400/70">→</span></div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="p-6 border-t border-white/10 bg-black/20 shrink-0">
+        <div class="flex space-x-2">
+            <button id="playBtn" class="flex-1 py-3 border rounded-lg flex items-center justify-center space-x-2 transition-all duration-200 border-green-400/50 text-green-400 bg-green-400/10">
+                <i data-lucide="pause" class="w-3.5 h-3.5"></i>
+                <span class="uppercase tracking-widest text-[10px] font-bold">Halt</span>
+            </button>
+            <button id="snapBtn" class="px-4 py-3 border border-white/20 text-white hover:bg-white/10 hover:border-white/40 transition-all flex items-center justify-center rounded-lg" title="Snapshot">
+                <i data-lucide="camera" class="w-4 h-4"></i>
+            </button>
+            <button id="recBtn" class="px-4 py-3 border border-white/20 text-white hover:border-red-500/50 hover:text-red-400 hover:bg-red-500/10 transition-all flex items-center justify-center rounded-lg" title="Record">
+                <div id="recIcon" class="w-3 h-3 rounded-full border border-current"></div>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Sliders toggle (when sidebar hidden) -->
+<button id="toggleControlsBtn" class="absolute top-6 left-6 z-40 p-2 text-white/50 hover:text-white transition-all" style="opacity:0;pointer-events:none">
+    <i data-lucide="sliders" class="w-5 h-5" hidden ></i>
+</button>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+// ─── STATE ───────────────────────────────────────────────────────────────────
+const S = {
+    image: null,
+    isPlaying: true,
+    isRecording: false,
+    scanPos: 0,        // always 0 → (limit-1) in image-pixel space
+    speed: 2,
+    sliceWidth: 1,
+    preserveAspect: false,
+    showControls: true,
+    direction: 'right',   // 'right' | 'left' | 'down' | 'up'
+    loopOn: false,
+    loopAxis: 'horizontal',   // 'horizontal' | 'vertical' | 'all'
+    _pDir:  1,            // pendulum: +1 = forward, -1 = backward
+    _pAxis: 'horizontal', // which axis the pendulum is currently on
+};
+
+const DIR_SYM = { right:'→', left:'←', down:'↓', up:'↑' };
+
+// ─── DOM ─────────────────────────────────────────────────────────────────────
+const canvas    = document.getElementById('mainCanvas');
+const ctx       = canvas.getContext('2d', { alpha: false });
+const fileInput = document.getElementById('fileInput');
+const overlay   = document.getElementById('uploadOverlay');
+const sidebar   = document.getElementById('sidebar');
+const toggleBtn = document.getElementById('toggleControlsBtn');
+const playBtn   = document.getElementById('playBtn');
+const axisRow   = document.getElementById('axisRow');
+const loopBtn   = document.getElementById('loopBtn');
+
+let rafId = null, mediaRecorder = null, recordedChunks = [];
+
+lucide.createIcons();
+
+// ─── SYNC UI ─────────────────────────────────────────────────────────────────
+function syncUI() {
+    document.getElementById('speedValue').textContent = S.speed.toFixed(1) + 'x';
+    document.getElementById('widthValue').textContent = S.sliceWidth + 'px';
+    document.getElementById('statDir').textContent    = DIR_SYM[S.direction];
+
+    // Aspect toggle
+    const toggleEl = document.getElementById('aspectToggle');
+    const thumb    = document.getElementById('aspectThumb');
+    const label    = document.getElementById('aspectLabel');
+    toggleEl.style.background = S.preserveAspect ? '#22c55e' : 'rgba(255,255,255,0.2)';
+    thumb.style.transform = S.preserveAspect ? 'translateX(20px)' : 'translateX(4px)';
+    label.textContent = S.preserveAspect ? 'NATIVE RATIO' : 'STRETCH TO FILL';
+    label.style.color = S.preserveAspect ? '#4ade80' : 'rgba(255,255,255,0.4)';
+
+    // Direction pad: active = current direction; dimmed = loop is on
+    document.querySelectorAll('.dir-btn').forEach(btn => {
+        const isActive = btn.dataset.dir === S.direction;
+        btn.className = 'dir-btn border rounded py-2 flex items-center justify-center '
+            + (S.loopOn ? 'dimmed ' : '')
+            + (isActive ? 'active' : 'inactive');
+    });
+
+    // Loop button
+    loopBtn.className = 'loop-btn border rounded px-3 py-1.5 flex items-center space-x-1.5 text-[9px] uppercase tracking-widest font-bold '
+        + (S.loopOn ? 'active' : 'inactive');
+    document.getElementById('loopBtnLabel').textContent = S.loopOn ? 'On' : 'Off';
+    axisRow.style.display = S.loopOn ? 'flex' : 'none';
+    document.getElementById('loopDesc').style.display = S.loopOn ? 'block' : 'none';
+
+    // Axis pills
+    document.querySelectorAll('.axis-pill').forEach(pill => {
+        pill.className = 'axis-pill border rounded py-1.5 text-[9px] uppercase tracking-wider font-bold text-center '
+            + (pill.dataset.axis === S.loopAxis ? 'active' : 'inactive');
+        pill.style.flex = '1';
+    });
+
+    // Play button
+    if (S.isPlaying) {
+        playBtn.className = 'flex-1 py-3 border rounded-lg flex items-center justify-center space-x-2 transition-all duration-200 border-green-400/50 text-green-400 bg-green-400/10';
+        playBtn.innerHTML = '<i data-lucide="pause" class="w-3.5 h-3.5"></i><span class="uppercase tracking-widest text-[10px] font-bold">Halt</span>';
+    } else {
+        playBtn.className = 'flex-1 py-3 border rounded-lg flex items-center justify-center space-x-2 transition-all duration-200 border-white/20 text-white hover:bg-white/10';
+        playBtn.innerHTML = '<i data-lucide="play" class="w-3.5 h-3.5"></i><span class="uppercase tracking-widest text-[10px] font-bold">Scan</span>';
+    }
+    lucide.createIcons();
+}
+
+// ─── RENDER ──────────────────────────────────────────────────────────────────
+// scanPos is ALWAYS 0→limit regardless of direction.
+// For 'right' and 'down': scanPos = leading edge from the start (left/top).
+// For 'left' and 'up':    scanPos = how far we've swept from the right/bottom edge.
+//   So the leading edge in image space is (limit - scanPos).
+
+function render() {
+    const img = S.image;
+    if (!img) return;
+
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const cW = canvas.width, cH = canvas.height;
+    const iW = img.width,    iH = img.height;
+    const slice = Math.max(1, S.sliceWidth);
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, cW, cH);
+
+    // Compute rendered image bounds (for aspect-ratio mode)
+    let rW, rH, ox, oy;
+    const isHoriz = S.direction === 'right' || S.direction === 'left';
+    if (S.preserveAspect) {
+        const scale = isHoriz ? cH / iH : cW / iW;
+        rW = iW * scale; rH = iH * scale;
+        ox = (cW - rW) / 2; oy = (cH - rH) / 2;
+    } else {
+        rW = cW; rH = cH; ox = 0; oy = 0;
+    }
+
+    const p = Math.max(0, Math.floor(S.scanPos));
+
+    // Draw stretched part first (extend 1px past seam), then real image on top at exact size.
+    // Real image is never stretched → no wobble; overlap hides the black line.
+    if (S.direction === 'right') {
+        const sx = ox + (p / iW) * rW;
+        if (sx < ox + rW)
+            ctx.drawImage(img, p, 0, slice, iH,  sx - 1, oy, (ox + rW) - (sx - 1), rH);
+        if (p > 0)
+            ctx.drawImage(img, 0, 0, p, iH,  ox, oy, sx - ox, rH);
+
+    } else if (S.direction === 'left') {
+        const edgeX = iW - p;
+        const sx = ox + (edgeX / iW) * rW;
+        if (sx > ox) {
+            const srcX = Math.min(edgeX, iW - slice);
+            ctx.drawImage(img, srcX, 0, slice, iH,  ox, oy, (sx - ox) + 1, rH);
+        }
+        if (edgeX < iW)
+            ctx.drawImage(img, edgeX, 0, iW - edgeX, iH,  sx, oy, (ox + rW) - sx, rH);
+
+    } else if (S.direction === 'down') {
+        const sy = oy + (p / iH) * rH;
+        if (sy < oy + rH)
+            ctx.drawImage(img, 0, p, iW, slice,  ox, sy - 1, rW, (oy + rH) - (sy - 1));
+        if (p > 0)
+            ctx.drawImage(img, 0, 0, iW, p,  ox, oy, rW, sy - oy);
+
+    } else { // up
+        const edgeY = iH - p;
+        const sy = oy + (edgeY / iH) * rH;
+        if (sy > oy) {
+            const srcY = Math.min(edgeY, iH - slice);
+            ctx.drawImage(img, 0, srcY, iW, slice,  ox, oy, rW, (sy - oy) + 1);
+        }
+        if (edgeY < iH)
+            ctx.drawImage(img, 0, edgeY, iW, iH - edgeY,  ox, sy, rW, (oy + rH) - sy);
+    }
+}
+
+// ─── ANIMATE ─────────────────────────────────────────────────────────────────
+function getLimit() {
+    if (!S.image) return 1;
+    return (S.direction === 'right' || S.direction === 'left') ? S.image.width : S.image.height;
+}
+
+function animate() {
+    if (S.isPlaying && S.image) {
+        const step = S.speed * 0.5;
+
+        if (S.loopOn) {
+            // Pendulum: advance scanPos by step * direction (+1 or -1)
+            S.scanPos += step * S._pDir;
+
+            const isHAxis = S._pAxis === 'horizontal';
+            const limit   = isHAxis ? S.image.width  : S.image.height;
+            const fwdDir  = isHAxis ? 'right' : 'down';
+            const bwdDir  = isHAxis ? 'left'  : 'up';
+
+            // Keep direction label in sync with pendulum motion
+            S.direction = S._pDir === 1 ? fwdDir : bwdDir;
+
+            if (S.scanPos >= limit - 1) {
+                // Hit the far end → reverse to backward
+                S.scanPos = limit - 1;
+                S._pDir   = -1;
+                S.direction = bwdDir;
+                syncUI();
+            } else if (S.scanPos <= 0) {
+                // Hit the near end → go forward again
+                S.scanPos = 0;
+                S._pDir   = 1;
+                // In 'all' mode, switch axis each time we return to 0
+                if (S.loopAxis === 'all') {
+                    S._pAxis = S._pAxis === 'horizontal' ? 'vertical' : 'horizontal';
+                }
+                S.direction = S._pAxis === 'horizontal' ? 'right' : 'down';
+                syncUI();
+            }
+
+        } else {
+            // Normal wrap-around
+            S.scanPos += step;
+            const limit = getLimit();
+            if (S.scanPos >= limit) S.scanPos = 0;
+        }
+
+        // Sparse stat update
+        if (Math.floor(S.scanPos) % 10 === 0) {
+            document.getElementById('statPos').textContent = Math.floor(S.scanPos);
+        }
+    }
+
+    render();
+    rafId = requestAnimationFrame(animate);
+}
+
+// ─── LOAD IMAGE ──────────────────────────────────────────────────────────────
+function loadImage(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+        const img = new Image();
+        img.onload = () => {
+            S.image    = img;
+            S.scanPos  = 0;
+            S.isPlaying= true;
+            document.getElementById('statRes').textContent = `${img.width}x${img.height}`;
+            overlay.style.opacity = '0';
+            setTimeout(() => overlay.style.display = 'none', 500);
+            sidebar.classList.remove('-translate-x-full');
+            toggleBtn.style.opacity = '0';
+            toggleBtn.style.pointerEvents = 'none';
+            syncUI();
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(animate);
+        };
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
+// ─── EVENTS ──────────────────────────────────────────────────────────────────
+
+// Upload
+document.getElementById('uploadBtnBig').onclick = () => fileInput.click();
+document.getElementById('newSourceBtn').onclick  = () => fileInput.click();
+fileInput.onchange = e => loadImage(e.target.files[0]);
+document.body.addEventListener('dragover', e => e.preventDefault());
+document.body.addEventListener('drop', e => { e.preventDefault(); loadImage(e.dataTransfer.files?.[0]); });
+
+// Sliders
+document.getElementById('speedInput').oninput = e => { S.speed = parseFloat(e.target.value); syncUI(); };
+document.getElementById('widthInput').oninput = e => { S.sliceWidth = parseInt(e.target.value); syncUI(); };
+
+// Aspect
+document.getElementById('aspectToggle').onclick = () => { S.preserveAspect = !S.preserveAspect; syncUI(); };
+
+// Play / pause
+playBtn.onclick = () => {
+    S.isPlaying = !S.isPlaying;
+    if (S.isPlaying && S.image && !rafId) {
+        rafId = requestAnimationFrame(animate);
+    }
+    syncUI();
+};
+
+// Direction pad
+document.querySelectorAll('.dir-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (S.loopOn) return;
+        S.direction = btn.dataset.dir;
+        S.scanPos   = 0;
+        syncUI();
+    });
+});
+
+// Loop toggle
+loopBtn.onclick = () => {
+    S.loopOn = !S.loopOn;
+    if (S.loopOn) {
+        // Seed pendulum state from current manual direction
+        const isH = S.direction === 'right' || S.direction === 'left';
+        S._pAxis  = isH ? 'horizontal' : 'vertical';
+        S._pDir   = 1;
+        S.scanPos = 0;
+        if (S.loopAxis !== 'all') S.loopAxis = S._pAxis;
+        S.direction = S._pAxis === 'horizontal' ? 'right' : 'down';
+    }
+    syncUI();
+};
+
+// Axis pills
+document.querySelectorAll('.axis-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+        S.loopAxis  = pill.dataset.axis;
+        S._pAxis    = (S.loopAxis === 'vertical') ? 'vertical' : 'horizontal';
+        S._pDir     = 1;
+        S.scanPos   = 0;
+        S.direction = S._pAxis === 'horizontal' ? 'right' : 'down';
+        syncUI();
+    });
+});
+
+// Snapshot
+document.getElementById('snapBtn').onclick = () => {
+    const a = Object.assign(document.createElement('a'), {
+        download: `async-${Date.now()}.png`,
+        href: canvas.toDataURL()
+    });
+    a.click();
+};
+
+// Record
+document.getElementById('recBtn').onclick = () => {
+    const btn = document.getElementById('recBtn');
+    const icon= document.getElementById('recIcon');
+    const ind = document.getElementById('recordingIndicator');
+    if (S.isRecording) {
+        mediaRecorder.stop();
+        S.isRecording = false;
+        btn.className = 'px-4 py-3 border border-white/20 text-white hover:border-red-500/50 hover:text-red-400 hover:bg-red-500/10 transition-all flex items-center justify-center rounded-lg';
+        icon.style.cssText = 'width:12px;height:12px;border-radius:50%;border:1px solid currentColor';
+        ind.style.display = 'none';
+    } else {
+        const opts = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+            ? { mimeType: 'video/webm;codecs=vp9' } : { mimeType: 'video/webm' };
+        recordedChunks = [];
+        mediaRecorder = new MediaRecorder(canvas.captureStream(60), opts);
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+        mediaRecorder.onstop = () => {
+            const url = URL.createObjectURL(new Blob(recordedChunks, { type: 'video/webm' }));
+            const a = Object.assign(document.createElement('a'), { href: url, download: `async-${Date.now()}.webm`, style: 'display:none' });
+            document.body.appendChild(a); a.click();
+            setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+        };
+        mediaRecorder.start();
+        S.isRecording = true;
+        btn.style.cssText = 'padding:12px;border:1px solid rgba(239,68,68,0.8);color:rgb(239,68,68);background:rgba(239,68,68,0.1);display:flex;align-items:center;justify-content:center;border-radius:8px;';
+        icon.style.cssText = 'width:12px;height:12px;border-radius:50%;background:rgb(239,68,68)';
+        ind.style.display = 'flex';
+    }
+};
+
+// Sidebar
+toggleBtn.onclick = () => {
+    S.showControls = true;
+    sidebar.classList.remove('-translate-x-full');
+    toggleBtn.style.opacity = '0';
+    toggleBtn.style.pointerEvents = 'none';
+};
+canvas.onclick = () => {
+    if (!S.image) return;
+    S.showControls = !S.showControls;
+    sidebar.classList.toggle('-translate-x-full', !S.showControls);
+    toggleBtn.style.opacity       = S.showControls ? '0' : '1';
+    toggleBtn.style.pointerEvents = S.showControls ? 'none' : '';
+};
+
+// Keyboard
+document.addEventListener('keydown', e => {
+    if (!S.image) return;
+    if (e.key === 'b' || e.key === 'B') canvas.click();
+    if (e.key === ' ') { playBtn.click(); e.preventDefault(); }
+    if (!S.loopOn) {
+        const map = { ArrowRight:'right', ArrowLeft:'left', ArrowDown:'down', ArrowUp:'up' };
+        if (map[e.key]) { S.direction = map[e.key]; S.scanPos = 0; syncUI(); e.preventDefault(); }
+    }
+});
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+syncUI();
+}); // end DOMContentLoaded
+</script>
+</body>
+</html>
