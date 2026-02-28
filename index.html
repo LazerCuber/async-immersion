@@ -63,22 +63,22 @@
             <div class="text-4xl font-light tracking-[0.2em] text-white/90">ASYNC</div>
             <div class="text-[10px] text-white/40 tracking-widest uppercase">Immersion Scanner</div>
         </div>
-        <p class="text-white/50 text-xs leading-relaxed font-light">Upload an image to initiate the pixel displacement sequence.</p>
+        <p class="text-white/50 text-xs leading-relaxed font-light">Upload one or more images to initiate the pixel displacement sequence.</p>
         <button id="uploadBtnBig" class="group relative px-8 py-4 bg-white/5 hover:bg-white/10 border border-white/20 transition-all duration-300 w-full overflow-hidden">
             <div class="flex items-center justify-center space-x-3 relative z-10">
                 <i data-lucide="upload" class="w-5 h-5 text-green-400"></i>
-                <span class="tracking-widest uppercase text-xs">Initialize Source</span>
+                <span class="tracking-widest uppercase text-xs">Initialize Source(s)</span>
             </div>
             <div class="absolute top-0 left-0 w-2 h-2 border-t border-l border-green-400/30 group-hover:border-green-400 transition-colors"></div>
             <div class="absolute top-0 right-0 w-2 h-2 border-t border-r border-green-400/30 group-hover:border-green-400 transition-colors"></div>
             <div class="absolute bottom-0 left-0 w-2 h-2 border-b border-l border-green-400/30 group-hover:border-green-400 transition-colors"></div>
             <div class="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-green-400/30 group-hover:border-green-400 transition-colors"></div>
         </button>
-        <p class="text-[9px] text-white/20 uppercase tracking-widest">Supports JPG, PNG, WEBP • drag & drop</p>
+        <p class="text-[9px] text-white/20 uppercase tracking-widest">Supports JPG, PNG, WEBP • drag & drop multiple</p>
     </div>
 </div>
 
-<input type="file" id="fileInput" class="hidden" accept="image/*" />
+<input type="file" id="fileInput" class="hidden" accept="image/*" multiple />
 
 <!-- Sidebar -->
 <div id="sidebar" class="absolute top-0 left-0 h-full w-[15rem] glass-panel transform -translate-x-full transition-transform duration-500 z-30 flex flex-col" style="transition-timing-function:cubic-bezier(0.16,1,0.3,1)">
@@ -95,6 +95,18 @@
     </div>
 
     <div class="flex-1 p-6 space-y-7 overflow-y-auto no-scrollbar">
+
+        <!-- Sequence Mode -->
+        <div id="sequenceSection" class="space-y-3" style="display:none">
+            <div class="flex items-center justify-between">
+                <div class="text-white/50 uppercase tracking-wider text-[10px] font-bold">Sequence Mode</div>
+                <button id="sequenceBtn" class="loop-btn inactive border rounded px-3 py-1.5 flex items-center space-x-1.5 text-[9px] uppercase tracking-widest font-bold">
+                    <i data-lucide="play-circle" class="w-3 h-3"></i>
+                    <span id="sequenceBtnLabel">Off</span>
+                </button>
+            </div>
+            <p id="sequenceDesc" class="text-[9px] text-white/25 leading-tight">Cycles through multiple images with rhythmic scan-line transitions.</p>
+        </div>
 
         <!-- Direction pad -->
         <div class="space-y-3">
@@ -208,6 +220,8 @@ document.addEventListener('DOMContentLoaded', () => {
 // ─── STATE ───────────────────────────────────────────────────────────────────
 const S = {
     image: null,
+    images: [],        // array of loaded Images
+    currentIdx: 0,     // current image index
     isPlaying: true,
     isRecording: false,
     scanPos: 0,        // always 0 → (limit-1) in image-pixel space
@@ -220,6 +234,9 @@ const S = {
     loopAxis: 'horizontal',   // 'horizontal' | 'vertical' | 'all'
     _pDir:  1,            // pendulum: +1 = forward, -1 = backward
     _pAxis: 'horizontal', // which axis the pendulum is currently on
+    isSequence: false,
+    seqStep: 0,           // 0: Reveal, 1: Wash, 2: Transition
+    seqProgress: 0,       // for transition step (0 to 1)
 };
 
 const DIR_SYM = { right:'→', left:'←', down:'↓', up:'↑' };
@@ -234,6 +251,8 @@ const toggleBtn = document.getElementById('toggleControlsBtn');
 const playBtn   = document.getElementById('playBtn');
 const axisRow   = document.getElementById('axisRow');
 const loopBtn   = document.getElementById('loopBtn');
+const sequenceBtn = document.getElementById('sequenceBtn');
+const sequenceSection = document.getElementById('sequenceSection');
 
 let rafId = null, mediaRecorder = null, recordedChunks = [];
 
@@ -245,6 +264,12 @@ function syncUI() {
     document.getElementById('widthValue').textContent = S.sliceWidth + 'px';
     document.getElementById('statDir').textContent    = DIR_SYM[S.direction];
 
+    // Sequence Section visibility
+    sequenceSection.style.display = S.images.length > 1 ? 'block' : 'none';
+    sequenceBtn.className = 'loop-btn border rounded px-3 py-1.5 flex items-center space-x-1.5 text-[9px] uppercase tracking-widest font-bold '
+        + (S.isSequence ? 'active' : 'inactive');
+    document.getElementById('sequenceBtnLabel').textContent = S.isSequence ? 'On' : 'Off';
+
     // Aspect toggle
     const toggleEl = document.getElementById('aspectToggle');
     const thumb    = document.getElementById('aspectThumb');
@@ -254,11 +279,11 @@ function syncUI() {
     label.textContent = S.preserveAspect ? 'NATIVE RATIO' : 'STRETCH TO FILL';
     label.style.color = S.preserveAspect ? '#4ade80' : 'rgba(255,255,255,0.4)';
 
-    // Direction pad: active = current direction; dimmed = loop is on
+    // Direction pad: active = current direction; dimmed = loop or sequence is on
     document.querySelectorAll('.dir-btn').forEach(btn => {
         const isActive = btn.dataset.dir === S.direction;
         btn.className = 'dir-btn border rounded py-2 flex items-center justify-center '
-            + (S.loopOn ? 'dimmed ' : '')
+            + ((S.loopOn || S.isSequence) ? 'dimmed ' : '')
             + (isActive ? 'active' : 'inactive');
     });
 
@@ -320,8 +345,62 @@ function render() {
 
     const p = Math.max(0, Math.floor(S.scanPos));
 
-    // Draw stretched part first (extend 1px past seam), then real image on top at exact size.
-    // Real image is never stretched → no wobble; overlap hides the black line.
+    // Handle Wash Step
+    if (S.isSequence && S.seqStep === 1) {
+        // Draw the full image first
+        ctx.drawImage(img, 0, 0, iW, iH, ox, oy, rW, rH);
+        
+        // Then draw the "wash" trail: the stretched slice covering what was revealed
+        if (S.direction === 'right') {
+            const sx = ox + (p / iW) * rW;
+            // Cover the left part with the current slice trail (L to R sweep)
+            ctx.drawImage(img, p, 0, slice, iH, ox, oy, sx - ox, rH);
+        } else if (S.direction === 'left') {
+            const edgeX = iW - p;
+            const sx = ox + (edgeX / iW) * rW;
+            const srcX = Math.min(iW - slice, Math.max(0, edgeX));
+            // Cover the right part with the current slice trail (R to L sweep)
+            ctx.drawImage(img, srcX, 0, slice, iH, sx, oy, (ox + rW) - sx, rH);
+        }
+        return;
+    }
+
+    // Handle Transition Step
+    if (S.isSequence && S.seqStep === 2) {
+        const nextIdx = (S.currentIdx + 1) % S.images.length;
+        const nextImg = S.images[nextIdx];
+        const nextDir = (nextIdx % 2 === 0) ? 'right' : 'left';
+        
+        // Stretched last slice of current
+        let curSX, curSY, curSW, curSH;
+        if (S.direction === 'right') { curSX = iW - 1; curSY = 0; curSW = 1; curSH = iH; }
+        else { curSX = 0; curSY = 0; curSW = 1; curSH = iH; }
+
+        // Stretched first slice of next
+        let nxtSX, nxtSY, nxtSW, nxtSH;
+        if (nextDir === 'right') { nxtSX = 0; nxtSY = 0; nxtSW = 1; nxtSH = nextImg.height; }
+        else { nxtSX = nextImg.width - 1; nxtSY = 0; nxtSW = 1; nxtSH = nextImg.height; }
+
+        // Cross-fade the stretched lines
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(img, curSX, curSY, curSW, curSH, ox, oy, rW, rH);
+        
+        ctx.globalAlpha = S.seqProgress;
+        ctx.drawImage(nextImg, nxtSX, nxtSY, nxtSW, nxtSH, ox, oy, rW, rH);
+
+        // Add a rhythmic "pulse" glow in the middle of the transition
+        const pulse = Math.sin(S.seqProgress * Math.PI); // 0 -> 1 -> 0
+        if (pulse > 0.01) {
+            ctx.globalAlpha = pulse * 0.2;
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(ox, oy, rW, rH);
+        }
+        
+        ctx.globalAlpha = 1.0;
+        return;
+    }
+
+    // Standard Reveal / Loop logic
     if (S.direction === 'right') {
         const sx = ox + (p / iW) * rW;
         if (sx < ox + rW)
@@ -368,7 +447,32 @@ function animate() {
     if (S.isPlaying && S.image) {
         const step = S.speed * 0.5;
 
-        if (S.loopOn) {
+        if (S.isSequence) {
+            const limit = getLimit();
+            
+            if (S.seqStep === 0 || S.seqStep === 1) {
+                // Reveal or Wash
+                S.scanPos += step;
+                if (S.scanPos >= limit) {
+                    S.scanPos = 0;
+                    S.seqStep++;
+                    if (S.seqStep === 2) S.seqProgress = 0;
+                }
+            } else if (S.seqStep === 2) {
+                // Transition
+                S.seqProgress += step / (limit * 0.2); // contemplative speed
+                if (S.seqProgress >= 1) {
+                    S.seqProgress = 0;
+                    S.seqStep = 0;
+                    S.currentIdx = (S.currentIdx + 1) % S.images.length;
+                    S.image = S.images[S.currentIdx];
+                    // Alternate direction: A (right), B (left), C (right)...
+                    S.direction = (S.currentIdx % 2 === 0) ? 'right' : 'left';
+                    S.scanPos = 0;
+                    syncUI();
+                }
+            }
+        } else if (S.loopOn) {
             // Pendulum: advance scanPos by step * direction (+1 or -1)
             S.scanPos += step * S._pDir;
 
@@ -415,39 +519,69 @@ function animate() {
     rafId = requestAnimationFrame(animate);
 }
 
-// ─── LOAD IMAGE ──────────────────────────────────────────────────────────────
-function loadImage(file) {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-        const img = new Image();
-        img.onload = () => {
-            S.image    = img;
-            S.scanPos  = 0;
-            S.isPlaying= true;
-            document.getElementById('statRes').textContent = `${img.width}x${img.height}`;
-            overlay.style.opacity = '0';
-            setTimeout(() => overlay.style.display = 'none', 500);
-            sidebar.classList.remove('-translate-x-full');
-            toggleBtn.style.opacity = '0';
-            toggleBtn.style.pointerEvents = 'none';
-            syncUI();
-            if (rafId) cancelAnimationFrame(rafId);
-            rafId = requestAnimationFrame(animate);
+// ─── LOAD IMAGES ─────────────────────────────────────────────────────────────
+function loadImages(files) {
+    if (!files || files.length === 0) return;
+    
+    const loadedImages = [];
+    let processed = 0;
+
+    Array.from(files).forEach((file, idx) => {
+        const reader = new FileReader();
+        reader.onload = e => {
+            const img = new Image();
+            img.onload = () => {
+                loadedImages[idx] = img;
+                processed++;
+                if (processed === files.length) {
+                    S.images = loadedImages.filter(Boolean);
+                    S.currentIdx = 0;
+                    S.image = S.images[0];
+                    S.scanPos = 0;
+                    S.isPlaying = true;
+                    
+                    // If multiple images, default to sequence mode if not already set
+                    if (S.images.length > 1) {
+                        S.isSequence = true;
+                        S.seqStep = 0;
+                        S.direction = 'right';
+                    }
+
+                    document.getElementById('statRes').textContent = `${S.image.width}x${S.image.height}`;
+                    overlay.style.opacity = '0';
+                    setTimeout(() => overlay.style.display = 'none', 500);
+                    sidebar.classList.remove('-translate-x-full');
+                    toggleBtn.style.opacity = '0';
+                    toggleBtn.style.pointerEvents = 'none';
+                    syncUI();
+                    if (rafId) cancelAnimationFrame(rafId);
+                    rafId = requestAnimationFrame(animate);
+                }
+            };
+            img.src = e.target.result;
         };
-        img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
+        reader.readAsDataURL(file);
+    });
 }
 
 // ─── EVENTS ──────────────────────────────────────────────────────────────────
 
 // Upload
 document.getElementById('uploadBtnBig').onclick = () => fileInput.click();
-document.getElementById('newSourceBtn').onclick  = () => fileInput.click();
-fileInput.onchange = e => loadImage(e.target.files[0]);
+document.getElementById('newSourceBtn').onclick  = () => {
+    S.images = [];
+    S.image = null;
+    S.currentIdx = 0;
+    S.isSequence = false;
+    overlay.style.display = 'flex';
+    overlay.style.opacity = '1';
+    sidebar.classList.add('-translate-x-full');
+    toggleBtn.style.opacity = '0';
+    fileInput.click();
+};
+fileInput.onchange = e => loadImages(e.target.files);
 document.body.addEventListener('dragover', e => e.preventDefault());
-document.body.addEventListener('drop', e => { e.preventDefault(); loadImage(e.dataTransfer.files?.[0]); });
+document.body.addEventListener('drop', e => { e.preventDefault(); loadImages(e.dataTransfer.files); });
 
 // Sliders
 document.getElementById('speedInput').oninput = e => { S.speed = parseFloat(e.target.value); syncUI(); };
@@ -479,6 +613,7 @@ document.querySelectorAll('.dir-btn').forEach(btn => {
 loopBtn.onclick = () => {
     S.loopOn = !S.loopOn;
     if (S.loopOn) {
+        S.isSequence = false; // Turn off sequence if loop is on
         // Seed pendulum state from current manual direction
         const isH = S.direction === 'right' || S.direction === 'left';
         S._pAxis  = isH ? 'horizontal' : 'vertical';
@@ -486,6 +621,20 @@ loopBtn.onclick = () => {
         S.scanPos = 0;
         if (S.loopAxis !== 'all') S.loopAxis = S._pAxis;
         S.direction = S._pAxis === 'horizontal' ? 'right' : 'down';
+    }
+    syncUI();
+};
+
+// Sequence toggle
+sequenceBtn.onclick = () => {
+    S.isSequence = !S.isSequence;
+    if (S.isSequence) {
+        S.loopOn = false; // Turn off loop if sequence is on
+        S.seqStep = 0;
+        S.scanPos = 0;
+        S.currentIdx = 0;
+        S.image = S.images[0];
+        S.direction = 'right';
     }
     syncUI();
 };
